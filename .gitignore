@@ -1,0 +1,14 @@
+# Datasets
+*.csv
+
+# Model Checkpoints and Weights
+my_news_summarizer/
+results/
+checkpoint-*/
+*.safetensors
+*.bin
+
+# Python standard
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
