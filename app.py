@@ -1,26 +1,51 @@
-import streamlit as st
-from transformers import T5Tokenizer, T5ForConditionalGeneration
 import torch
+import warnings
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from transformers import T5Tokenizer, T5ForConditionalGeneration
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="AI Headline Generator", page_icon="📰")
+# Ignore harmless warnings
+warnings.filterwarnings("ignore")
 
-# --- MODEL LOADING (Cached) ---
-@st.cache_resource
-def load_model():
-    # Update this path to your local folder
-    model_path = "./my_news_summarizer"
+app = FastAPI(
+    title="AI News Summarizer Hub",
+    description="A premium full-stack local AI Headline & Summary Generator"
+)
+
+# --- MODEL LOADING & INITIALIZATION ---
+print("Waking up your custom AI model...")
+model_path = "./my_news_summarizer"
+
+try:
     tokenizer = T5Tokenizer.from_pretrained(model_path)
     model = T5ForConditionalGeneration.from_pretrained(model_path)
-    return tokenizer, model
-
-tokenizer, model = load_model()
+    
+    # Determine the fastest available device
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Loading model onto device: {device.upper()}")
+    model.to(device)
+    print("AI Model loaded successfully and is ready!")
+except Exception as e:
+    print(f"Error loading local model from {model_path}: {e}")
+    print("Falling back to loading 't5-small' model as safety net...")
+    try:
+        tokenizer = T5Tokenizer.from_pretrained("t5-small")
+        model = T5ForConditionalGeneration.from_pretrained("t5-small")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
+        print("Fallback model 't5-small' loaded successfully!")
+    except Exception as fallback_error:
+        print(f"Critical error loading fallback model: {fallback_error}")
+        raise fallback_error
 
 # --- CORE LOGIC ---
-def write_headline(article_text):
+def generate_summary_or_headline(article_text: str) -> str:
     text = "summarize: " + article_text
-    inputs = tokenizer(text, return_tensors="pt", max_length=512, truncation=True)
+    # Convert text to tokens and move to selected device
+    inputs = tokenizer(text, return_tensors="pt", max_length=512, truncation=True).to(device)
     
+    # Generate summary tokens
     outputs = model.generate(
         inputs.input_ids, 
         max_length=32, 
@@ -28,34 +53,39 @@ def write_headline(article_text):
         early_stopping=True
     )
     
+    # Decode back to clean text
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-# --- USER INTERFACE ---
-st.title("📰 AI Headline Generator")
-st.markdown("Paste your article below, and let the custom AI craft a headline for you.")
+# --- API TYPES ---
+class ArticleRequest(BaseModel):
+    text: str
 
-# Input area
-article_input = st.text_area("Article Text:", placeholder="Paste your paragraph here...", height=300)
+# --- API ENDPOINTS ---
 
-# Execution button
-if st.button("Generate Headline"):
-    if article_input.strip() == "":
-        st.warning("Please paste some text first!")
-    else:
-        with st.spinner("AI is thinking..."):
-            try:
-                headline = write_headline(article_input)
-                
-                # Display result
-                st.subheader("Generated Headline:")
-                st.success(f"**{headline.upper()}**")
-                
-                # Optional: Add a 'Copy' feature (built-in to st.code)
-                st.code(headline.upper())
-                
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
+# 1. SERVE THE NEW FRONTEND UI
+@app.get("/", response_class=HTMLResponse)
+async def serve_frontend():
+    # This reads the new file we just created instead of storing HTML in Python
+    with open("templates/index.html", "r", encoding="utf-8") as f:
+        html_content = f.read()
+    return HTMLResponse(content=html_content, status_code=200)
 
-# Footer
-st.divider()
-st.caption("Powered by T5 and Streamlit")
+# 2. HANDLE THE BUTTON CLICK FROM THE UI
+@app.post("/generate")
+async def generate_endpoint(payload: ArticleRequest):
+    if not payload.text.strip():
+        raise HTTPException(status_code=400, detail="Article text cannot be empty.")
+    
+    try:
+        # Pass the UI text directly into your perfectly working T5 logic
+        summary_result = generate_summary_or_headline(payload.text)
+        
+        # Send it back to the React UI
+        return {"headline": summary_result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+
+# Run server when executing file directly
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
