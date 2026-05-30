@@ -1,6 +1,8 @@
 # News AI Summarizer
 
 This project is an AI-powered news summarizer. 
+It can be accesessed at the link :
+https://huggingface.co/spaces/Akshay2904/NewsForge-AI
 
 ## Setup and Running
 
